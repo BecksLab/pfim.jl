@@ -87,6 +87,11 @@ function PFIM(
     y::Float64 = 2.5,
 )
 
+    # data checks
+    if !(certainty_req == :all || certainty_req isa Int)
+        error("certainty_req must be :all or Int")
+    end
+
     # --- derive trait types from rules ---
     if isnothing(trait_types)
         trait_types = Symbol.(unique(feeding_rules.trait_type_resource))
@@ -146,8 +151,9 @@ function PFIM(
     taxa = Symbol.(trait_data[:, taxon_col])
 
     # --- downsampling step ---
+    # essentially updates int_matrix with downsampled (Binary) version
     if downsample
-        int_matrix = _downsample(int_matrix, y)
+        int_matrix = _downsample(int_matrix, taxa, y)
     end
 
     # --- output handling ---
@@ -156,7 +162,7 @@ function PFIM(
 
     elseif return_type == :edgelist
         edges = [
-            (Symbol(taxa[res]), Symbol(taxa[cons]))
+            (taxa[res], taxa[cons])
             for cons in 1:S, res in 1:S
             if int_matrix[cons, res] == 1
         ]
