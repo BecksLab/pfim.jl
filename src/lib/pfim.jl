@@ -1,17 +1,77 @@
 
 """
-   PFIM(trait_data::DataFrame, feeding_rules::DataFrame; y::Float64 = 2.5, downsample::Bool = true)
+    PFIM(trait_data::DataFrame, feeding_rules::DataFrame; kwargs...)
 
-    Takes a data frame and implements the feeding rules to determine the
-    feasibility of links between species. As well as applying the link
-    distribution downsampling approach.
-    
-    #### References
-    
-    Shaw, Jack O., Alexander M. Dunhill, Andrew P. Beckerman, Jennifer A.
-    Dunne, and Pincelli M. Hull. 2024. “A Framework for Reconstructing 
-    Ancient Food Webs Using Functional Trait Data.” 
-    https://doi.org/10.1101/2024.01.30.578036.
+    Infer a trophic interaction network using trait-based feeding rules following
+    the Paleo Food Web Inference Model (PFIM).
+
+    This function evaluates all possible consumer–resource pairs and determines
+    interaction feasibility based on categorical trait matching rules and,
+    optionally, a numerical size constraint. Interactions are retained if they
+    meet a specified certainty threshold. An optional downsampling step can be
+    applied to match expected link distributions.
+
+    # Arguments
+    - `trait_data::DataFrame`:
+        A data frame where each row represents a taxon and columns contain trait values.
+
+    - `feeding_rules::DataFrame`:
+        A data frame defining allowed consumer–resource trait combinations. Must contain:
+        - `trait_type_resource`
+        - `trait_resource`
+        - `trait_type_consumer`
+        - `trait_consumer`
+
+    # Keyword Arguments
+    - `taxon_col::Symbol = :species`:
+        Column name in `trait_data` containing taxon identifiers.
+
+    - `trait_types::Union{Nothing, Vector{Symbol}} = nothing`:
+        Subset of trait columns to use. If `nothing`, trait types are inferred from `feeding_rules`.
+
+    - `size_col::Union{Nothing, Symbol} = nothing`:
+        Column containing numerical size values for taxa.
+
+    - `num_size_rule::Union{Function, Nothing} = nothing`:
+        Function defining predator–prey size feasibility. Must take `(resource_size, consumer_size)`
+        and return `1` (feasible) or `0` (infeasible).
+
+    - `certainty_req::Union{Symbol, Int} = :all`:
+        Number of trait rules required for an interaction:
+        - `:all` → all trait types must match
+        - `Int` → minimum number of matching trait types
+
+    - `allow_self::Bool = true`:
+        Whether to allow self-interactions (cannibalism).
+
+    - `return_type::Symbol = :network`:
+        Output format:
+        - `:network` → `SpeciesInteractionNetwork`
+        - `:matrix` → adjacency matrix (`Bool`)
+        - `:edgelist` → vector of `(resource, consumer)` tuples
+
+    - `downsample::Bool = false`:
+        Whether to apply probabilistic downsampling to reduce link density.
+
+    - `y::Float64 = 2.5`:
+        Downsampling parameter controlling expected number of links per consumer.
+
+    # Returns
+    Depends on `return_type`:
+
+    - `:network` → `SpeciesInteractionNetwork`
+    - `:matrix` → `Matrix{Bool}` of size `S × S`
+    - `:edgelist` → `Vector{Tuple{Any, Any}}` of `(resource, consumer)` pairs
+
+    # Details
+    Trait matching is performed across all specified trait types. For each taxon pair,
+    the number of satisfied feeding rules is counted. Interactions are retained if this
+    count meets or exceeds the `certainty_req` threshold.
+
+    If provided, the numerical size rule is applied in addition to categorical matching.
+
+    Downsampling is applied after interaction inference and probabilistically removes
+    links based on consumer degree.
 """
 function PFIM(
     trait_data::DataFrame,
@@ -83,7 +143,7 @@ function PFIM(
         end
     end
 
-    taxa = trait_data[:, taxon_col]
+    taxa = Symbol.(trait_data[:, taxon_col])
 
     # --- downsampling step ---
     if downsample
@@ -96,7 +156,7 @@ function PFIM(
 
     elseif return_type == :edgelist
         edges = [
-            (taxa[res], taxa[cons])
+            (Symbol(taxa[res]), Symbol(taxa[cons]))
             for cons in 1:S, res in 1:S
             if int_matrix[cons, res] == 1
         ]
