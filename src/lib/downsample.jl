@@ -27,7 +27,18 @@ function _downsample(int_matrix, taxa, y::Float64)
         link_dist[i] = exp(r / E)
     end
 
-    prob_matrix = zeros(Float64, size(int_matrix))
+    # normalize probabilities safely
+    maxval = maximum(prob_matrix)
+    
+    if maxval > 0 && isfinite(maxval)
+        prob_matrix ./= maxval
+    else
+        prob_matrix .= 0.0
+    end
+    
+    # enforce valid probability range
+    prob_matrix = clamp.(prob_matrix, 0.0, 1.0)
+    
 
     for i in axes(int_matrix, 1)
         for j in axes(int_matrix, 2)
