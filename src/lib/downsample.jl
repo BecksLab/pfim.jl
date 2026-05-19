@@ -27,15 +27,8 @@ function _downsample(int_matrix, taxa, y::Float64)
         link_dist[i] = exp(r / E)
     end
 
-    # normalize probabilities safely
-    maxval = maximum(prob_matrix)
-    
-    if maxval > 0 && isfinite(maxval)
-        prob_matrix ./= maxval
-    else
-        prob_matrix .= 0.0
-    end
-    
+    prob_matrix = zeros(Float64, size(int_matrix))
+
     # enforce valid probability range
     prob_matrix = clamp.(prob_matrix, 0.0, 1.0)
     
@@ -48,7 +41,14 @@ function _downsample(int_matrix, taxa, y::Float64)
         end
     end
 
-    prob_matrix ./= maximum(prob_matrix)
+    # normalize probabilities safely
+    maxval = maximum(prob_matrix)
+
+    if maxval > 0 && isfinite(maxval)
+        prob_matrix ./= maxval
+    else
+        prob_matrix .= 0.0
+    end
 
     nodes = Unipartite(taxa)
     edges = Probabilistic(prob_matrix)
