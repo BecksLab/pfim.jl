@@ -29,7 +29,7 @@ end
 
 # Single-step probabilistic prune (Roopnarine aligned)
 """
-    _single_downsample_step(mat::AbstractMatrix{Bool}, taxa::Vector, y::Float64) -> Matrix{Bool}
+    _single_downsample_step(mat::AbstractMatrix{Bool}, y::Float64) -> Matrix{Bool}
 
 Perform a single-step probabilistic link pruning on the network.
 
@@ -39,7 +39,6 @@ consumers and a scaling exponent y.
 
 # Arguments
 - `mat::AbstractMatrix{Bool}`: Binary adjacency matrix where rows are consumers and columns are resources.
-- `taxa::Vector`: Species identifiers.
 - `y::Float64`: Scaling exponent controlling the expected link distributions.
 
 # Mathematical Details
@@ -53,8 +52,9 @@ p_i = \\exp\\left(\\frac{r_i}{E}\\right)
 
 These probabilities are projected onto the adjacency matrix, normalized by the maximum probability value, and finally subjected to independent Bernoulli trials via element-wise comparison with a random distribution.
 """
-function _single_downsample_step(mat::AbstractMatrix{Bool}, taxa::Vector, y::Float64)
-    S = length(taxa)
+function _single_downsample_step(mat::AbstractMatrix{Bool}, y::Float64)
+    
+    S = size(mat, 1)
     
     # Generality of each consumer
     generality_vector = vec(sum(mat, dims=2)) 
@@ -93,7 +93,7 @@ end
 # ==============================================================================
 
 """
-    downsample_network(int_matrix::AbstractMatrix{Bool}, taxa::Vector, y::Float64; kwargs...) -> Matrix{Bool}
+    downsample_network(int_matrix::AbstractMatrix{Bool}, y::Float64; kwargs...) -> Matrix{Bool}
 
 Downsample a food web's interaction matrix based on species link distributions.
 
@@ -102,7 +102,6 @@ pruning targeted to match a specific network connectance (Co).
 
 # Arguments
 - `int_matrix::AbstractMatrix{Bool}`: Binary adjacency matrix (size `S × S`).
-- `taxa::Vector`: A list of unique species identifiers of length `S`.
 - `y::Float64`: Structural scaling parameter (typically around 2.0 to 3.0) 
   controlling expected links per consumer.
 
@@ -138,17 +137,16 @@ completely empty matrix), two safety guardrails will trigger an early break:
 """
 function downsample_network(
     int_matrix::AbstractMatrix{Bool}, 
-    taxa::Vector, 
     y::Float64;
     target_co::Union{Nothing, Float64} = nothing,
     min_spp_prop::Float64 = 0.5,
     max_iter::Int = 50
 )
-    S = length(taxa)
+    S = size(int_matrix, 1)
     
     # --- Case 1: Single-Step Downsampling ---
     if isnothing(target_co)
-        return _single_downsample_step(int_matrix, taxa, y)
+        return _single_downsample_step(int_matrix, y)
     end
 
     # --- Case 2: Iterative Connectance-Targeted Downsampling ---
@@ -164,7 +162,7 @@ function downsample_network(
     iter = 0
     while current_co > target_co && iter < max_iter
         iter += 1
-        next_matrix = _single_downsample_step(current_matrix, taxa, y)
+        next_matrix = _single_downsample_step(current_matrix, y)
         active_spp, next_co = _get_downsample_metrics(next_matrix, S)
 
         # Did we lose too many active species?

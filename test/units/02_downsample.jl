@@ -72,13 +72,13 @@ end
     @test init_co == 0.84
 
     # A: Test basic external single-step downsample (no target_co)
-    single_down = downsample_network(dense_matrix, taxa, 2.5)
+    single_down = downsample_network(dense_matrix, 2.5)
     @test size(single_down) == (5, 5)
     @test eltype(single_down) == Bool
 
     # B: Test targeting a specific lower connectance (e.g., 0.4)
     target_co = 0.4
-    pruned_matrix = downsample_network(dense_matrix, taxa, 2.5; target_co = target_co)
+    pruned_matrix = downsample_network(dense_matrix, 2.5; target_co = target_co)
     
     final_co = sum(pruned_matrix) / 25
     @test final_co <= target_co
@@ -88,7 +88,6 @@ end
     # we should halt before we violate min_spp_prop (default 0.5, meaning 3 active species)
     guarded_matrix = downsample_network(
         dense_matrix, 
-        taxa, 
         2.5; 
         target_co = 0.04, 
         min_spp_prop = 0.6  # Needs at least 3 species to keep a link
