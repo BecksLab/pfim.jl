@@ -153,7 +153,7 @@ function PFIM(
     # --- downsampling step ---
     # essentially updates int_matrix with downsampled (Binary) version
     if downsample
-        int_matrix = _downsample(int_matrix, taxa, y)
+        int_matrix = downsample_network(int_matrix, taxa, y)
     end
 
     # --- output handling ---
