@@ -1,7 +1,7 @@
 name = "pfim"
 uuid = "170e0a07-6213-470a-9106-238d1c727450"
-authors = ["Tanya Strydom <tanya.strydom@icloud.com>"]
 version = "0.1.0"
+authors = ["Tanya Strydom <tanya.strydom@icloud.com>"]
 
 [deps]
 DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
