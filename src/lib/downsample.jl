@@ -155,7 +155,7 @@ function downsample_network(
     _, current_co = _get_downsample_metrics(current_matrix, S)
 
     if current_co <= target_co
-        @warn "Initial connectance ($current_co) is already <= target ($target_co)."
+        @warn "Initial connectance ($current_co) is already <= target ($target_co). Returning original network"
         return current_matrix
     end
 
