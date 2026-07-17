@@ -1,3 +1,5 @@
+module SPTestDownsample
+
 using DataFrames
 using pfim
 using SpeciesInteractionNetworks
@@ -29,10 +31,10 @@ using Test
         downsample = false
     )
     full_matrix = net_full.edges.edges
-    initial_link_count = sum(full_matrix) # Should be 5 links
+    initial_link_count = sum(full_matrix) # Links built based on traits
 
     # --- Step 2: Run PFIM WITH downsampling ---
-    #Random.seed!(66)
+
     net_pruned = PFIM(trait_data, feeding_rules;
         return_type = :network,
         downsample = true,
@@ -47,7 +49,6 @@ using Test
     @test richness(net_pruned) == 5
     @test species(net_pruned) == [:a, :b, :c, :d, :e]
 
-    # These will now pass!
     @test pruned_link_count < initial_link_count
     @test all(pruned_matrix .<= full_matrix)
 end
@@ -56,8 +57,6 @@ end
 # 2. External Downsampling & Target Connectance
 # -------------------------------
 @testset "Downsampling: target connectance & external use" begin
-    # Create a dense 5x5 matrix (connectance = 0.8)
-    # S = 5, S^2 = 25 potential links. 20 active links.
     taxa = [:sp1, :sp2, :sp3, :sp4, :sp5]
     dense_matrix = Bool[
         1 1 1 1 0;
@@ -67,8 +66,9 @@ end
         1 1 1 0 1
     ]
     
-    # Verify initial connectance is 20/25 = 0.8
-    init_co = sum(dense_matrix) / 25
+    # FIX: Dynamic math evaluation replacing hardcoded mismatched comments
+    total_elements = length(dense_matrix)
+    init_co = sum(dense_matrix) / total_elements
     @test init_co == 0.84
 
     # A: Test basic external single-step downsample (no target_co)
@@ -80,22 +80,23 @@ end
     target_co = 0.4
     pruned_matrix = downsample_network(dense_matrix, 2.5; target_co = target_co)
     
-    final_co = sum(pruned_matrix) / 25
+    final_co = sum(pruned_matrix) / total_elements
     @test final_co <= target_co
     
     # C: Test Defensive Guardrails (extremely low target connectance)
-    # If we target 0.05 (which requires dropping almost all links), 
-    # we should halt before we violate min_spp_prop (default 0.5, meaning 3 active species)
     guarded_matrix = downsample_network(
         dense_matrix, 
         2.5; 
         target_co = 0.04, 
-        min_spp_prop = 0.6  # Needs at least 3 species to keep a link
+        min_spp_prop = 0.6  # Needs at least 3 species to keep a link (0.6 * 5 = 3)
     )
     
-    # Count species that still have interactions
-    active_spp = sum(sum(guarded_matrix, dims=1) .> 0 .|| sum(guarded_matrix, dims=2)' .> 0)
+    # Clean dimension reduction matching Rows=Predators, Cols=Prey matrix properties
+    pred_has_links = vec(sum(guarded_matrix, dims = 2) .> 0) # Collapse cols to check rows
+    prey_has_links = vec(sum(guarded_matrix, dims = 1) .> 0) # Collapse rows to check cols
+    active_spp = sum(pred_has_links .|| prey_has_links)
     
-    # We should have respected the guardrail of retaining at least 3 active species
     @test active_spp >= 3
+end
+
 end

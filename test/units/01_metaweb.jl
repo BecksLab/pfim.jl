@@ -14,8 +14,14 @@ traits = DataFrame(CSV.File("units/data/trait.csv"))
 traits = DataFrame([col => string.(traits[!, col]) for col in names(traits)])
 
 known_list = DataFrame(CSV.File("units/data/interactions.csv"))
+# Keep known_edges structured natively as (Resource, Consumer) from the file
 known_edges = [
     (Symbol(r.resource), Symbol(r.consumer)) for r in eachrow(known_list)
+]
+
+# Create a mapping of known edges to our new corrected convention: (Consumer, Resource)
+expected_consumer_resource_edges = [
+    (c, r) for (r, c) in known_edges
 ]
 
 # -------------------------------
@@ -32,7 +38,8 @@ end
     net = pfim.PFIM(traits, feeding_rules; return_type=:network, downsample=false)
     pfim_int = interactions(net)
 
-    @test sort(pfim_int) == sort([(c, r, true) for (r, c) in known_edges])
+    # SpeciesInteractionNetworks uses (from, to, value) -> (Consumer, Resource, true)
+    @test sort(pfim_int) == sort([(c, r, true) for (c, r) in expected_consumer_resource_edges])
 end
 
 # -------------------------------
@@ -41,7 +48,8 @@ end
 @testset "Edgelist output matches expected interactions" begin
     edges = pfim.PFIM(traits, feeding_rules; return_type=:edgelist, downsample=false)
 
-    @test sort(edges) == sort(known_edges)
+    # FIX: Now matching against our corrected (Consumer, Resource) layout
+    @test sort(edges) == sort(expected_consumer_resource_edges)
 end
 
 # -------------------------------
@@ -54,8 +62,10 @@ end
     taxa = Symbol.(traits.species)
     edge_set = Set(edges)
 
+    # FIX: Adjusted reconstructed tuple to (Consumer, Resource) to mirror 
+    # the underlying matrix rows (cons) and columns (res).
     reconstructed = Set([
-        (taxa[res], taxa[cons])
+        (taxa[cons], taxa[res])
         for cons in axes(mat,1), res in axes(mat,2)
         if mat[cons, res]
     ])
@@ -140,9 +150,10 @@ end
         downsample=false
     )
 
-    @test Symbol.(("Zebra", "Lion")) in edges
+    # to (:Lion, :Zebra) [Consumer, Resource]
+    @test Symbol.(("Lion", "Zebra")) in edges
 
-    # stricter rule
+    # Stricter rule
     strict_rule = (res, con) -> con > res ? 1 : 0
 
     edges_strict = pfim.PFIM(
