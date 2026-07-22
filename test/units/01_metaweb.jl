@@ -14,12 +14,12 @@ traits = DataFrame(CSV.File("units/data/trait.csv"))
 traits = DataFrame([col => string.(traits[!, col]) for col in names(traits)])
 
 known_list = DataFrame(CSV.File("units/data/interactions.csv"))
-# Keep known_edges structured natively as (Resource, Consumer) from the file
+# Keep known_edges structured from the file
 known_edges = [
     (Symbol(r.resource), Symbol(r.consumer)) for r in eachrow(known_list)
 ]
 
-# Create a mapping of known edges to our new corrected convention: (Consumer, Resource)
+# Create a mapping of known edges
 expected_consumer_resource_edges = [
     (c, r) for (r, c) in known_edges
 ]
@@ -48,7 +48,7 @@ end
 @testset "Edgelist output matches expected interactions" begin
     edges = pfim.PFIM(traits, feeding_rules; return_type=:edgelist, downsample=false)
 
-    # FIX: Now matching against our corrected (Consumer, Resource) layout
+    # check
     @test sort(edges) == sort(expected_consumer_resource_edges)
 end
 
@@ -62,8 +62,7 @@ end
     taxa = Symbol.(traits.species)
     edge_set = Set(edges)
 
-    # FIX: Adjusted reconstructed tuple to (Consumer, Resource) to mirror 
-    # the underlying matrix rows (cons) and columns (res).
+    # check against edgelist
     reconstructed = Set([
         (taxa[cons], taxa[res])
         for cons in axes(mat,1), res in axes(mat,2)
@@ -168,6 +167,43 @@ end
     )
 
     @test isempty(edges_strict)
+end
+
+# -------------------------------
+# 9. Basal Species Generality Check
+# -------------------------------
+@testset "Basal species have zero generality" begin
+    # Create a 3-tier food chain
+    trait_data = DataFrame(
+        species = ["Grass", "Zebra", "Lion"],
+        diet    = ["producer", "herbivore", "carnivore"]
+    )
+
+    feeding_rules_basal = DataFrame(
+        trait_type_resource = ["diet", "diet"],
+        trait_resource      = ["herbivore", "producer"],
+        trait_type_consumer = ["diet", "diet"],
+        trait_consumer      = ["carnivore", "herbivore"]
+    )
+
+    # Ensure everything is stringified to match your traits processing pipeline
+    trait_data = DataFrame([col => string.(trait_data[!, col]) for col in names(trait_data)])
+    feeding_rules_basal = DataFrame([col => string.(feeding_rules_basal[!, col]) for col in names(feeding_rules_basal)])
+
+    # Test 1: Adjacency matrix verification (Rows = Consumers)
+    mat = pfim.PFIM(trait_data, feeding_rules_basal; return_type=:matrix, downsample=false)
+    
+    # Grass is at index 1. Its row sum must be exactly 0 since it consumes nothing.
+    @test sum(mat[1, :]) == 0
+
+    # Test 2: SpeciesInteractionNetworks generality interface verification
+    net = pfim.PFIM(trait_data, feeding_rules_basal; return_type=:network, downsample=false)
+    
+    # The generality metric for a unipartite basal node must equal 0
+    @test generality(net, :Grass) == 0
+    
+    # Check that consumers possess expected non-zero counts
+    @test generality(net, :Zebra) == 1
 end
 
 end
