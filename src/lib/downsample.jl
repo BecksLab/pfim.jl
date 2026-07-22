@@ -102,7 +102,7 @@ function downsample_network(
     max_iter::Int = 50
 )
     S = size(int_matrix, 1)
-    
+
     # --- Case 1: Single-Step Downsampling ---
     if isnothing(target_co)
         return _single_downsample_step(int_matrix, y)
@@ -118,13 +118,14 @@ function downsample_network(
         return current_matrix
     end
 
-    # Track closest matrix state to target_co (handles both overshoots and undershoots)
+    # Track the closest network encountered
     best_matrix = copy(current_matrix)
     best_co = current_co
     best_diff = abs(current_co - target_co)
 
     iter = 0
-    while iter < max_iter
+
+    while current_co > target_co && iter < max_iter
         iter += 1
 
         links = findall(current_matrix)
@@ -137,7 +138,7 @@ function downsample_network(
         E = exp(log(S) * (y - 1) / y)
         link_dist = exp.(generality_vector ./ E)
 
-        # Compute prune weights: lower retention probability = higher chance to prune
+        # Compute prune weights
         link_prune_weights = Vector{Float64}(undef, length(links))
         for (idx, link) in enumerate(links)
             i = link[1]
@@ -147,7 +148,7 @@ function downsample_network(
 
         prob_dist = link_prune_weights ./ sum(link_prune_weights)
 
-        # Select one link to prune using Roopnarine weighting
+        # Select one link to prune
         chosen_idx = _rand_categorical(prob_dist)
         target_link = links[chosen_idx]
 
@@ -156,31 +157,27 @@ function downsample_network(
 
         active_spp, next_co = _get_downsample_metrics(temp_matrix, S)
 
-        # Guardrail 1: Disconnect protection
+        # Reject removals that violate species retention
         if active_spp < min_species
             continue
         end
 
-        current_diff = abs(next_co - target_co)
-
-        # If this step moves us closer to target_co (above OR below), save it
-        if current_diff < best_diff
-            best_diff = current_diff
-            best_co = next_co
-            best_matrix = copy(temp_matrix)
-        end
-
-        # Stopping rule: If we are below target and taking another step moves us FURTHER away
-        if next_co < target_co && (target_co - (next_co - 1/S^2)) > best_diff
-            break
-        end
-
+        # Accept the removal
         current_matrix = temp_matrix
         current_co = next_co
+
+        # Update best network if this one is closer to the target
+        current_diff = abs(current_co - target_co)
+
+        if current_diff < best_diff
+            best_diff = current_diff
+            best_co = current_co
+            best_matrix = copy(current_matrix)
+        end
     end
 
-    if iter == max_iter && best_co > target_co
-        @warn "Reached max iterations ($max_iter) without hitting target connectance. Best Co: $best_co"
+    if iter == max_iter && current_co > target_co
+        @warn "Reached max iterations ($max_iter) before dropping below target connectance. Closest connectance found: $best_co"
     end
 
     return best_matrix
