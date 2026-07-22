@@ -1,91 +1,85 @@
+"""
+Downsampling.jl
+-------------------------
+Provides topological network downsampling routines based on species link 
+distributions using the scaling framework from Roopnarine (2006).
+
+### Matrix Convention:
+- **Rows (i):** Consumers / Predators (who is doing the eating)
+- **Columns (j):** Resources / Prey (who is being eaten)
+- `matrix[i, j] = 1` indicates that consumer `i` eats resource `j`.
+
+### Ecological Mechanics:
+The algorithm scales a link's survival probability based on the consumer's total 
+generality (out-degree, computed along rows). Highly generalist consumers retain links 
+with higher log-odds baseline weights, while specialists or reduced webs prune down 
+exponentially relative to a network scale constraint \$E\$.
+"""
+
+using LinearAlgebra
+using Statistics
+
 # ==============================================================================
-# Helper Functions
+# Internal Helper Functions
 # ==============================================================================
 
-# Helper to calculate active species and current connectance
 """
     _get_downsample_metrics(mat::AbstractMatrix{Bool}, S::Int) -> Tuple{Int, Float64}
 
 Calculate internal metrics used to monitor network degradation during downsampling.
-
-# Arguments
-- `mat::AbstractMatrix{Bool}`: Binary adjacency matrix (size `S × S`).
-- `S::Int`: Total number of species in the pool.
-
-# Returns
-- `active::Int`: The count of species that have at least one incoming or outgoing interaction.
-- `co::Float64`: The network connectance calculated as:
-  
-  Co = L/S^2
-  
-  where L is the number of active links in `mat`.
 """
 function _get_downsample_metrics(mat::AbstractMatrix{Bool}, S::Int)
-    # Active species: has at least one incoming or outgoing link
-    active = sum(sum(mat, dims=1) .> 0 .|| sum(mat, dims=2)' .> 0)
+    pred_has_links = vec(sum(mat, dims=2) .> 0) # Active consumer rows
+    prey_has_links = vec(sum(mat, dims=1) .> 0) # Active resource columns
+    active = sum(pred_has_links .|| prey_has_links)
+    
     co = sum(mat) / (S^2)
     return active, co
 end
 
-# Single-step probabilistic prune (Roopnarine aligned)
 """
     _single_downsample_step(mat::AbstractMatrix{Bool}, y::Float64) -> Matrix{Bool}
 
 Perform a single-step probabilistic link pruning on the network.
-
-This function implements the core probabilistic scaling logic from Roopnarine (2006). 
-Link retention probability scale is parameterized by the generality (out-degree) of 
-consumers and a scaling exponent y.
-
-# Arguments
-- `mat::AbstractMatrix{Bool}`: Binary adjacency matrix where rows are consumers and columns are resources.
-- `y::Float64`: Scaling exponent controlling the expected link distributions.
-
-# Mathematical Details
-For each consumer species i with generality r_i (number of resources consumed), the scaling benchmark E is:
-
-E = \\exp\\left(\\frac{\\ln(S) ⋅ (y - 1)}{y}\\right)
-
-The probability of retaining an interaction for consumer i is proportional to:
-
-p_i = \\exp\\left(\\frac{r_i}{E}\\right)
-
-These probabilities are projected onto the adjacency matrix, normalized by the maximum probability value, and finally subjected to independent Bernoulli trials via element-wise comparison with a random distribution.
+Implements the core scaling logic from Roopnarine (2006).
 """
 function _single_downsample_step(mat::AbstractMatrix{Bool}, y::Float64)
-    
     S = size(mat, 1)
     
-    # Generality of each consumer
     generality_vector = vec(sum(mat, dims=2)) 
 
-    # Calculate link distributions based on Roopnarine (2006)
     E = exp(log(S) * (y - 1) / y)
     link_dist = exp.(generality_vector ./ E)
 
-    # Populate probability matrix directly
     prob_matrix = zeros(Float64, S, S)
     for i in 1:S
-        for j in 1:S
-            if mat[i, j]
-                prob_matrix[i, j] = link_dist[i]
-            end
-        end
+        prey_indices = findall(mat[i, :])
+        prob_matrix[i, prey_indices] .= link_dist[i]
     end
 
-    # --- FIX: Normalize FIRST, then Clamp ---
     maxval = maximum(prob_matrix)
     if maxval > 0 && isfinite(maxval)
         prob_matrix ./= maxval
     else
         prob_matrix .= 0.0
     end
-    prob_matrix = clamp.(prob_matrix, 0.0, 1.0) # Safe final step
+    prob_matrix = clamp.(prob_matrix, 0.0, 1.0)
 
-    # Probabilistic draw
-    random_draw_matrix = rand(S, S) .<= prob_matrix
+    # FIX: Mask with original matrix using bitwise AND to avoid generating fake links
+    return mat .& (rand(S, S) .<= prob_matrix)
+end
 
-    return random_draw_matrix
+# Categorical sampler for weighted probabilities
+function _rand_categorical(p::Vector{Float64})
+    r = rand()
+    cp = 0.0
+    for i in 1:length(p)
+        cp += p[i]
+        if r <= cp
+            return i
+        end
+    end
+    return length(p)
 end
 
 # ==============================================================================
@@ -97,43 +91,8 @@ end
 
 Downsample a food web's interaction matrix based on species link distributions.
 
-This function supports both standard single-step probabilistic pruning and iterative 
-pruning targeted to match a specific network connectance (Co). 
-
-# Arguments
-- `int_matrix::AbstractMatrix{Bool}`: Binary adjacency matrix (size `S × S`).
-- `y::Float64`: Structural scaling parameter (typically around 2.0 to 3.0) 
-  controlling expected links per consumer.
-
-# Keyword Arguments
-- `target_co::Union{Nothing, Float64} = nothing`: 
-  The desired target connectance (L/S^2). If `nothing` (default), the function runs a 
-  single-step probabilistic pruning and exits. If a float is provided, it iteratively 
-  pruning the network until this connectance threshold is met or exceeded.
-- `min_spp_prop::Float64 = 0.5`: 
-  Defensive safeguard. The minimum proportion of the initial species pool that must retain 
-  at least one link (incoming or outgoing). If an iterative step would violate this limit, 
-  downsampling is halted to protect network integrity.
-- `max_iter::Int = 50`: 
-  Defensive safeguard. Maximum number of iterations to run in targeted mode to prevent 
-  infinite loops.
-
-# Returns
-- `Matrix{Bool}`: The downsampled binary adjacency matrix.
-
-# Details & Safeguards
-When `target_co` is supplied, the network is pruned iteratively because a single-pass 
-Bernoulli draw cannot guarantee a precise global connectance target on discrete graphs.
-During each iteration, the probabilities are dynamically updated based on the *updated* state of the network.
-
-To prevent catastrophic web collapse (e.g., losing too many species or ending up with a 
-completely empty matrix), two safety guardrails will trigger an early break:
-1. **Species Conservation:** If the proportion of functionally active species drops below `min_spp_prop`, the process aborts and returns the matrix state from the previous iteration.
-2. **Total Collapse:** If the total link count reaches zero, the process aborts.
-
-# References
-- Roopnarine, Peter D. 2006. “Extinction Cascades and Catastrophe in Ancient Food Webs.” 
-  *Paleobiology* 32 (1): 1-19. https://www.jstor.org/stable/4096814
+Supports both standard single-step probabilistic pruning and iterative pruning 
+targeted to match a specific network connectance (Co).
 """
 function downsample_network(
     int_matrix::AbstractMatrix{Bool}, 
@@ -155,35 +114,74 @@ function downsample_network(
     _, current_co = _get_downsample_metrics(current_matrix, S)
 
     if current_co <= target_co
-        @warn "Initial connectance ($current_co) is already <= target ($target_co). Returning original network"
+        @warn "Initial connectance ($current_co) is already <= target ($target_co). Returning original network."
         return current_matrix
     end
 
+    # Track closest matrix state to target_co (handles both overshoots and undershoots)
+    best_matrix = copy(current_matrix)
+    best_co = current_co
+    best_diff = abs(current_co - target_co)
+
     iter = 0
-    while current_co > target_co && iter < max_iter
+    while iter < max_iter
         iter += 1
-        next_matrix = _single_downsample_step(current_matrix, y)
-        active_spp, next_co = _get_downsample_metrics(next_matrix, S)
 
-        # Did we lose too many active species?
+        links = findall(current_matrix)
+        if isempty(links)
+            break
+        end
+
+        # Calculate Roopnarine (2006) weights for existing links
+        generality_vector = vec(sum(current_matrix, dims=2))
+        E = exp(log(S) * (y - 1) / y)
+        link_dist = exp.(generality_vector ./ E)
+
+        # Compute prune weights: lower retention probability = higher chance to prune
+        link_prune_weights = Vector{Float64}(undef, length(links))
+        for (idx, link) in enumerate(links)
+            i = link[1]
+            p_retain = link_dist[i]
+            link_prune_weights[idx] = 1.0 - p_retain + 1e-6
+        end
+
+        prob_dist = link_prune_weights ./ sum(link_prune_weights)
+
+        # Select one link to prune using Roopnarine weighting
+        chosen_idx = _rand_categorical(prob_dist)
+        target_link = links[chosen_idx]
+
+        temp_matrix = copy(current_matrix)
+        temp_matrix[target_link] = false
+
+        active_spp, next_co = _get_downsample_metrics(temp_matrix, S)
+
+        # Guardrail 1: Disconnect protection
         if active_spp < min_species
-            @warn "Downsampling halted (iter $iter): Species retention threshold violated ($active_spp/$S active, limit is $min_species)."
+            continue
+        end
+
+        current_diff = abs(next_co - target_co)
+
+        # If this step moves us closer to target_co (above OR below), save it
+        if current_diff < best_diff
+            best_diff = current_diff
+            best_co = next_co
+            best_matrix = copy(temp_matrix)
+        end
+
+        # Stopping rule: If we are below target and taking another step moves us FURTHER away
+        if next_co < target_co && (target_co - (next_co - 1/S^2)) > best_diff
             break
         end
 
-        # Did the network completely collapse?
-        if sum(next_matrix) == 0
-            @warn "Downsampling halted (iter $iter): Network collapsed to 0 links."
-            break
-        end
-
-        current_matrix = next_matrix
+        current_matrix = temp_matrix
         current_co = next_co
     end
 
-    if iter == max_iter && current_co > target_co
-        @warn "Reached max iterations ($max_iter) without hitting target connectance. Current Co: $current_co"
+    if iter == max_iter && best_co > target_co
+        @warn "Reached max iterations ($max_iter) without hitting target connectance. Best Co: $best_co"
     end
 
-    return current_matrix
+    return best_matrix
 end
